@@ -46,10 +46,11 @@
   <div class="row">
     <input id="terminal-id" placeholder="Terminal ID (e.g. T1)">
     <input id="terminal-name" placeholder="Name (e.g. Terminal 1)">
+    <input id="terminal-capacity" type="number" min="1" placeholder="Capacity (default 15)">
   </div>
   <button onclick="addTerminal()">Add terminal</button>
   <table>
-    <thead><tr><th>ID</th><th>Name</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Name</th><th>Occupancy</th><th></th></tr></thead>
     <tbody id="terminal-table"></tbody>
   </table>
 </div>
@@ -102,6 +103,7 @@ function renderTerminals(terminals) {
     <tr>
       <td>${t.terminal_id}</td>
       <td>${t.name}</td>
+      <td>${t.occupancy}/${t.capacity} ${t.is_full ? '<span class="pill" style="border-color:var(--bad);color:var(--bad)">full</span>' : ''}</td>
       <td><button class="danger" onclick="removeTerminal('${t.terminal_id}')">Remove</button></td>
     </tr>`).join("");
 }
@@ -149,11 +151,15 @@ async function addTerminal() {
   clearError("error");
   const terminal_id = document.getElementById("terminal-id").value.trim();
   const name = document.getElementById("terminal-name").value.trim();
+  const capacityStr = document.getElementById("terminal-capacity").value.trim();
   if (!terminal_id || !name) return;
+  const body = { terminal_id, name };
+  if (capacityStr) body.capacity = parseInt(capacityStr, 10);
   try {
-    await api.post("/api/admin/terminals", { terminal_id, name });
+    await api.post("/api/admin/terminals", body);
     document.getElementById("terminal-id").value = "";
     document.getElementById("terminal-name").value = "";
+    document.getElementById("terminal-capacity").value = "";
     await refreshAll();
   } catch (e) { showError("error", e); }
 }

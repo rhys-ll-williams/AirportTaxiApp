@@ -54,6 +54,12 @@ class Taxi:
     return_deadline: Optional[datetime] = None
     last_return_on_time: Optional[bool] = None
 
+    # Pending return: a terminal the driver has chosen to head back to while
+    # still out on an exemption, but hasn't been added to yet (see
+    # TERMINAL_ADD_LEAD_MINUTES). Cleared once promoted to CALLED.
+    pending_return_terminal_id: Optional[str] = None
+    expected_arrival_at: Optional[datetime] = None
+
     created_at: datetime = field(default_factory=utcnow)
 
 
@@ -61,6 +67,7 @@ class Taxi:
 class Terminal:
     terminal_id: str
     name: str
+    capacity: int
 
 
 @dataclass

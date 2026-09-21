@@ -1,5 +1,6 @@
 import pytest
 
+from app.config import DEFAULT_TERMINAL_CAPACITY
 from app.models import ConflictError, NotFoundError
 from app.services import admin_service, queue_service
 from app.store import Store
@@ -46,3 +47,13 @@ def test_add_and_remove_rank_agent(store: Store):
 
     admin_service.remove_rank_agent(store, "RA-1")
     assert admin_service.list_rank_agents(store) == []
+
+
+def test_add_terminal_defaults_capacity(store: Store):
+    terminal = admin_service.add_terminal(store, "T5", "Terminal 5")
+    assert terminal.capacity == DEFAULT_TERMINAL_CAPACITY == 15
+
+
+def test_add_terminal_accepts_capacity_override(store: Store):
+    terminal = admin_service.add_terminal(store, "T5", "Terminal 5", capacity=6)
+    assert terminal.capacity == 6

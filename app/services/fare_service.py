@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Optional, Tuple
 
-from app.config import RETURN_TIME_FLOOR_MINUTES, TRAFFIC_MULTIPLIERS
+from app.config import RETURN_TIME_FLOOR_MINUTES, TERMINAL_ADD_LEAD_MINUTES, TRAFFIC_MULTIPLIERS
 from app.data.destinations import find_destination
 from app.models import (
     ConflictError,
@@ -14,11 +14,17 @@ from app.models import (
     FareClassification,
     Taxi,
     TaxiStatus,
+    Terminal,
     utcnow,
 )
 from app.services.geofence import is_within_airport_geofence
 from app.services.ids import new_id
-from app.services.lookups import get_rank_agent_or_404, get_taxi_or_404, get_terminal_or_404
+from app.services.lookups import (
+    get_rank_agent_or_404,
+    get_taxi_or_404,
+    get_terminal_or_404,
+    terminal_occupancy,
+)
 from app.services.notifications import notify
 from app.store import Store
 
@@ -128,15 +134,59 @@ def complete_fare(store: Store, badge_number: str) -> Taxi:
         return taxi
 
 
+def _add_taxi_to_terminal(
+    store: Store,
+    taxi: Taxi,
+    terminal: Terminal,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+) -> None:
+    """Actually seats the taxi at the terminal's rank: from this point it
+    counts against the terminal's capacity and is visible to rank agents.
+    """
+    on_time = taxi.return_deadline is None or utcnow() <= taxi.return_deadline
+    within_geofence: Optional[bool] = None
+    if lat is not None and lon is not None:
+        within_geofence = is_within_airport_geofence(lat, lon)
+
+    taxi.status = TaxiStatus.CALLED
+    taxi.terminal_id = terminal.terminal_id
+    taxi.called_at = utcnow()
+    taxi.self_checked_in = True
+    taxi.last_return_on_time = on_time
+    taxi.exemption_type = None
+    taxi.exemption_destination = None
+    taxi.return_deadline = None
+    taxi.pending_return_terminal_id = None
+    taxi.expected_arrival_at = None
+
+    suffix = "" if on_time else " (after the return time limit)"
+    geofence_note = ""
+    if within_geofence is False:
+        geofence_note = " Note: check-in location was outside the airport geofence."
+    notify(
+        store,
+        taxi.badge_number,
+        f"You've been added to the rank at {terminal.name}{suffix}.{geofence_note}",
+        terminal_id=terminal.terminal_id,
+    )
+
+
 def return_to_terminal(
     store: Store,
     badge_number: str,
     terminal_id: str,
+    eta_minutes: float = 0,
     lat: Optional[float] = None,
     lon: Optional[float] = None,
 ) -> Taxi:
-    """Driver exercising a local/fares-fare exemption checks back in
-    directly at a terminal of their choice, skipping the central queue.
+    """Driver exercising a local/fares-fare exemption picks a terminal to
+    return to. Any terminal that currently has room can be picked, but the
+    driver only actually occupies a rank slot (and becomes visible to rank
+    agents) once they're within TERMINAL_ADD_LEAD_MINUTES of arriving - if
+    they're picking further out than that, they're recorded as a pending
+    return and get added automatically as that window approaches (see
+    `promote_due_returns`).
     """
     with store.lock:
         taxi = get_taxi_or_404(store, badge_number)
@@ -144,28 +194,45 @@ def return_to_terminal(
             raise ConflictError(f"Taxi {badge_number} does not have an active return exemption")
         terminal = get_terminal_or_404(store, terminal_id)
 
-        on_time = taxi.return_deadline is None or utcnow() <= taxi.return_deadline
-        within_geofence: Optional[bool] = None
-        if lat is not None and lon is not None:
-            within_geofence = is_within_airport_geofence(lat, lon)
+        if terminal_occupancy(store, terminal_id) >= terminal.capacity:
+            raise ConflictError(
+                f"{terminal.name} is full ({terminal.capacity} taxis) - choose a different terminal"
+            )
 
-        taxi.status = TaxiStatus.CALLED
-        taxi.terminal_id = terminal_id
-        taxi.called_at = utcnow()
-        taxi.self_checked_in = True
-        taxi.last_return_on_time = on_time
-        taxi.exemption_type = None
-        taxi.exemption_destination = None
-        taxi.return_deadline = None
+        if eta_minutes <= TERMINAL_ADD_LEAD_MINUTES:
+            _add_taxi_to_terminal(store, taxi, terminal, lat, lon)
+        else:
+            taxi.pending_return_terminal_id = terminal_id
+            taxi.expected_arrival_at = utcnow() + timedelta(minutes=eta_minutes)
 
-        suffix = "" if on_time else " (after the return time limit)"
-        geofence_note = ""
-        if within_geofence is False:
-            geofence_note = " Note: check-in location was outside the airport geofence."
-        notify(
-            store,
-            badge_number,
-            f"Checked in at {terminal.name}{suffix}.{geofence_note}",
-            terminal_id=terminal_id,
-        )
         return taxi
+
+
+def promote_due_returns(store: Store) -> None:
+    """Adds pending returning drivers to their chosen terminal once they're
+    within the lead-time window and a rank slot is actually free. Called
+    opportunistically on read/write so state stays fresh without a
+    background scheduler.
+    """
+    with store.lock:
+        now = utcnow()
+        for taxi in store.taxis.values():
+            if taxi.status != TaxiStatus.RETURN_EXEMPT or not taxi.pending_return_terminal_id:
+                continue
+            if taxi.expected_arrival_at is None:
+                continue
+            if now < taxi.expected_arrival_at - timedelta(minutes=TERMINAL_ADD_LEAD_MINUTES):
+                continue
+
+            terminal = store.terminals.get(taxi.pending_return_terminal_id)
+            if terminal is None:
+                # Terminal was removed while this return was pending; the
+                # driver will need to pick a different one.
+                taxi.pending_return_terminal_id = None
+                taxi.expected_arrival_at = None
+                continue
+
+            if terminal_occupancy(store, terminal.terminal_id) >= terminal.capacity:
+                continue  # still full - try again next tick
+
+            _add_taxi_to_terminal(store, taxi, terminal)

@@ -25,6 +25,7 @@ class RankAgentCreateRequest(BaseModel):
 class TerminalCreateRequest(BaseModel):
     terminal_id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
+    capacity: Optional[int] = Field(default=None, gt=0)
 
 
 class TrafficLevelRequest(BaseModel):
@@ -48,6 +49,9 @@ class RankAgentSummary(BaseModel):
 class TerminalSummary(BaseModel):
     terminal_id: str
     name: str
+    capacity: int
+    occupancy: int
+    is_full: bool
 
 
 # --- Driver-facing status -------------------------------------------------------------
@@ -82,6 +86,12 @@ class TaxiStatusResponse(BaseModel):
     minutes_remaining_to_return: Optional[float] = None
     last_return_on_time: Optional[bool] = None
 
+    # Pending return: chosen a terminal but not added to its rank yet
+    pending_return_terminal_id: Optional[str] = None
+    pending_return_terminal_name: Optional[str] = None
+    expected_arrival_at: Optional[datetime] = None
+    minutes_until_added: Optional[float] = None
+
     notifications: List[NotificationOut] = []
 
 
@@ -108,6 +118,7 @@ class FareResponse(BaseModel):
 
 class ReturnToTerminalRequest(BaseModel):
     terminal_id: str = Field(..., min_length=1)
+    eta_minutes: float = Field(default=0, ge=0)
     lat: Optional[float] = None
     lon: Optional[float] = None
 

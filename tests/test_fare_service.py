@@ -154,3 +154,100 @@ def test_return_to_terminal_requires_active_exemption(store: Store):
 
     with pytest.raises(ConflictError):
         fare_service.return_to_terminal(store, "T-1", "T2")
+
+
+def _fill_terminal_with_called_taxis(store: Store, terminal_id: str, count: int, prefix="FILL"):
+    for i in range(count):
+        badge = f"{prefix}-{i}"
+        admin_service.add_taxi(store, badge, f"Filler {i}")
+        queue_service.join_feeder_park(store, badge)
+        dispatch_service.call_next_taxi(store, terminal_id)
+
+
+def test_return_to_terminal_rejects_a_full_terminal(store: Store):
+    admin_service.add_terminal(store, "T2", "Terminal 2", capacity=2)
+    _fill_terminal_with_called_taxis(store, "T2", 2)
+
+    badge, _ = _ready_taxi_at_rank(store)
+    fare_service.record_fare(store, badge, "Windsor", "RA-1")
+    fare_service.complete_fare(store, badge)
+
+    with pytest.raises(ConflictError):
+        fare_service.return_to_terminal(store, badge, "T2")
+
+    # Rejected pick should not have consumed the exemption.
+    assert store.taxis[badge].status == TaxiStatus.RETURN_EXEMPT
+
+
+def test_return_to_terminal_with_short_eta_is_added_immediately(store: Store):
+    admin_service.add_terminal(store, "T2", "Terminal 2")
+    badge, _ = _ready_taxi_at_rank(store)
+    fare_service.record_fare(store, badge, "Windsor", "RA-1")
+    fare_service.complete_fare(store, badge)
+
+    taxi = fare_service.return_to_terminal(store, badge, "T2", eta_minutes=3)
+
+    assert taxi.status == TaxiStatus.CALLED
+    assert taxi.terminal_id == "T2"
+    assert taxi.pending_return_terminal_id is None
+
+
+def test_return_to_terminal_with_long_eta_is_deferred(store: Store):
+    admin_service.add_terminal(store, "T2", "Terminal 2")
+    badge, _ = _ready_taxi_at_rank(store)
+    fare_service.record_fare(store, badge, "Windsor", "RA-1")
+    fare_service.complete_fare(store, badge)
+
+    taxi = fare_service.return_to_terminal(store, badge, "T2", eta_minutes=40)
+
+    # Still exempt / not yet occupying a rank slot.
+    assert taxi.status == TaxiStatus.RETURN_EXEMPT
+    assert taxi.pending_return_terminal_id == "T2"
+    assert taxi.expected_arrival_at is not None
+    assert store.terminals["T2"].capacity == 15  # unaffected until promoted
+
+
+def test_promote_due_returns_adds_taxi_once_within_lead_window(store: Store):
+    admin_service.add_terminal(store, "T2", "Terminal 2")
+    badge, _ = _ready_taxi_at_rank(store)
+    fare_service.record_fare(store, badge, "Windsor", "RA-1")
+    fare_service.complete_fare(store, badge)
+    fare_service.return_to_terminal(store, badge, "T2", eta_minutes=40)
+
+    fare_service.promote_due_returns(store)
+    assert store.taxis[badge].status == TaxiStatus.RETURN_EXEMPT  # not due yet
+
+    # Fast-forward: now within the 5-minute add window.
+    store.taxis[badge].expected_arrival_at = utcnow() + timedelta(minutes=3)
+    fare_service.promote_due_returns(store)
+
+    taxi = store.taxis[badge]
+    assert taxi.status == TaxiStatus.CALLED
+    assert taxi.terminal_id == "T2"
+    assert taxi.self_checked_in is True
+    assert taxi.pending_return_terminal_id is None
+
+
+def test_promote_due_returns_waits_for_a_free_slot_when_terminal_is_full(store: Store):
+    admin_service.add_terminal(store, "T2", "Terminal 2", capacity=1)
+    _fill_terminal_with_called_taxis(store, "T2", 1)
+
+    badge, _ = _ready_taxi_at_rank(store)
+    fare_service.record_fare(store, badge, "Windsor", "RA-1")
+    fare_service.complete_fare(store, badge)
+
+    # Directly set up a due pending return (bypassing the pick-time capacity
+    # check, to exercise the "wait for a slot" path at promotion time).
+    taxi = store.taxis[badge]
+    taxi.pending_return_terminal_id = "T2"
+    taxi.expected_arrival_at = utcnow() + timedelta(minutes=1)
+
+    fare_service.promote_due_returns(store)
+    assert store.taxis[badge].status == TaxiStatus.RETURN_EXEMPT  # terminal still full
+
+    # Free up a slot: the filler taxi gets given a fare and drives off.
+    fare_service.record_fare(store, "FILL-0", "Manchester", "RA-1")
+
+    fare_service.promote_due_returns(store)
+    assert store.taxis[badge].status == TaxiStatus.CALLED
+    assert store.taxis[badge].terminal_id == "T2"

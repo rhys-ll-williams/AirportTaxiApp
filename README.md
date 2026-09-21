@@ -33,8 +33,17 @@ the whole flow can be driven from a browser without any extra tooling.
   deadline (minimum **60 min** for Local, **90 min** for Fares Fare — the
   spec's floors — extended by the destination's own round-trip estimate and
   by simulated live traffic conditions, never shortened below the floor).
-  Before that deadline, the driver can check back in directly at a
-  **terminal of their choice**, skipping the queue entirely.
+  Before that deadline, the driver can pick **any terminal that currently
+  has room**, skipping the central queue entirely.
+- **Terminal capacity** — each terminal holds at most **15 taxis** at once
+  (configurable per terminal by an admin). A returning driver can only pick
+  a terminal that isn't already full. Picking a terminal doesn't reserve a
+  spot for the whole drive back, though: the driver gives an expected
+  arrival time, and they're only actually added to that terminal's rank —
+  counted against its capacity and visible to its rank agent — once they're
+  within **5 minutes** of arriving (or immediately, if they're already
+  close). If the terminal fills up in the meantime, the driver is added
+  automatically as soon as a slot frees up.
 - **Geofencing** — a returning driver's check-in location can optionally be
   checked against an airport-radius geofence, purely to confirm they're
   back in the vicinity. It never disqualifies a driver or penalizes the
@@ -120,9 +129,15 @@ python scripts/seed_demo_data.py   # requires the server to already be running
    - `Windsor` → Fares Fare.
 5. **Driver app** → click "Fare complete". Standard fares rejoin the feeder
    park automatically; Local/Fares Fare fares show a live countdown and a
-   terminal picker to check back in directly.
+   terminal picker (full terminals are greyed out) plus an "expected minutes
+   until arrival" field. Pick a terminal with `0` minutes to be added
+   straight away, or a larger number to see it show as a pending "heading to
+   Terminal X" return that gets added automatically once you're within 5
+   minutes of arriving.
 6. **Feeder park screen** → watch badge numbers appear as they get close to
    being called.
+7. **Admin** → the terminals table shows live occupancy (`x/15`) and flags
+   full terminals.
 
 ## Tests
 

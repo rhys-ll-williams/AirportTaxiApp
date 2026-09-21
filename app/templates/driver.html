@@ -38,15 +38,27 @@
       <button id="btn-complete" onclick="doAction('complete-fare')">Fare complete</button>
     </div>
 
+    <div id="pending-return" style="display:none; margin-top:10px">
+      <div class="notification">
+        Heading to <strong id="pending-terminal-name">-</strong>.
+        You'll be added to that terminal's rank in about
+        <strong id="pending-minutes">-</strong> — it fills up around 5 minutes before your expected arrival, so it
+        doesn't hold the spot the whole way back.
+      </div>
+    </div>
+
     <div id="return-form" style="display:none; margin-top:10px">
-      <label for="return-terminal">Choose terminal to return to</label>
+      <label for="return-terminal">Choose a terminal to return to (any that isn't full)</label>
       <select id="return-terminal"></select>
+      <label for="return-eta">Expected minutes until you arrive back at the airport</label>
+      <input id="return-eta" type="number" min="0" value="0" placeholder="0 = arriving now">
+      <p class="muted">If you're more than 5 minutes out, you'll be added to the terminal's rank automatically as that window approaches - no need to come back to the app.</p>
       <label class="muted">Optional: simulate check-in GPS location (used only to confirm you're back at the airport, never to judge your route)</label>
       <div class="row">
         <input id="return-lat" placeholder="lat (e.g. 51.47)">
         <input id="return-lon" placeholder="lon (e.g. -0.4543)">
       </div>
-      <button onclick="returnToTerminal()">Check in at terminal</button>
+      <button onclick="returnToTerminal()">Confirm terminal choice</button>
     </div>
   </div>
 
@@ -73,12 +85,18 @@ async function loadDriver() {
 
 async function loadTerminalOptions() {
   const select = document.getElementById("return-terminal");
-  if (select.dataset.loaded) return;
+  const previous = select.value;
   try {
     const terminals = await api.get("/api/admin/terminals");
-    select.innerHTML = terminals.map(t => `<option value="${t.terminal_id}">${t.name}</option>`).join("");
-    select.dataset.loaded = "1";
-  } catch (e) { /* ignore */ }
+    select.innerHTML = terminals.map(t => `
+      <option value="${t.terminal_id}" ${t.is_full ? "disabled" : ""}>
+        ${t.name} (${t.occupancy}/${t.capacity}${t.is_full ? " — full" : ""})
+      </option>
+    `).join("");
+    if (previous && [...select.options].some(o => o.value === previous)) {
+      select.value = previous;
+    }
+  } catch (e) { /* ignore, keep showing the last-known options */ }
 }
 
 async function refresh() {
@@ -123,12 +141,23 @@ function render(data) {
   document.getElementById("btn-leave").disabled = data.status !== "in_feeder_park";
   document.getElementById("btn-complete").disabled = data.status !== "on_fare";
 
+  const hasPendingReturn = exempt && !!data.pending_return_terminal_id;
   const returnForm = document.getElementById("return-form");
-  if (exempt) {
+  const pendingBlock = document.getElementById("pending-return");
+  if (hasPendingReturn) {
+    returnForm.style.display = "none";
+    pendingBlock.style.display = "block";
+    document.getElementById("pending-terminal-name").textContent = data.pending_return_terminal_name || data.pending_return_terminal_id;
+    const mins = data.minutes_until_added;
+    document.getElementById("pending-minutes").textContent =
+      mins === null || mins === undefined ? "-" : (mins <= 0 ? "moments (waiting for a free spot)" : `${mins} min`);
+  } else if (exempt) {
     returnForm.style.display = "block";
+    pendingBlock.style.display = "none";
     loadTerminalOptions();
   } else {
     returnForm.style.display = "none";
+    pendingBlock.style.display = "none";
   }
 
   const notifWrap = document.getElementById("notifications");
@@ -160,9 +189,10 @@ async function returnToTerminal() {
   if (!currentBadge) return;
   clearError("error");
   const terminal_id = document.getElementById("return-terminal").value;
+  const etaStr = document.getElementById("return-eta").value.trim();
   const latStr = document.getElementById("return-lat").value.trim();
   const lonStr = document.getElementById("return-lon").value.trim();
-  const body = { terminal_id };
+  const body = { terminal_id, eta_minutes: etaStr ? parseFloat(etaStr) : 0 };
   if (latStr) body.lat = parseFloat(latStr);
   if (lonStr) body.lon = parseFloat(lonStr);
   try {

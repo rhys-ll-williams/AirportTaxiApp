@@ -37,6 +37,15 @@ TRAFFIC_MULTIPLIERS = {
     TrafficLevel.HEAVY: 1.35,
 }
 
+# --- Terminal capacity ------------------------------------------------------------------
+# How many taxis a terminal rank can physically hold at once.
+DEFAULT_TERMINAL_CAPACITY = 15
+# A returning (local/fares-fare exempt) driver's chosen terminal only counts
+# them against its capacity - and they only appear on the rank - once they're
+# within this many minutes of their expected arrival, so a terminal doesn't
+# get reserved solid by drivers who picked it an hour in advance.
+TERMINAL_ADD_LEAD_MINUTES = 5
+
 # --- Geofencing -----------------------------------------------------------------------
 # Heathrow Airport approximate centre point.
 AIRPORT_LATITUDE = 51.4700

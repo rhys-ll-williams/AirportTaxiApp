@@ -8,6 +8,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Response
 
 from app.deps import store_dependency
+from app.models import Terminal
 from app.schemas import (
     RankAgentCreateRequest,
     RankAgentSummary,
@@ -18,9 +19,21 @@ from app.schemas import (
     TrafficLevelRequest,
 )
 from app.services import admin_service
+from app.services.lookups import terminal_occupancy
 from app.store import Store
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _terminal_summary(store: Store, terminal: Terminal) -> TerminalSummary:
+    occupancy = terminal_occupancy(store, terminal.terminal_id)
+    return TerminalSummary(
+        terminal_id=terminal.terminal_id,
+        name=terminal.name,
+        capacity=terminal.capacity,
+        occupancy=occupancy,
+        is_full=occupancy >= terminal.capacity,
+    )
 
 
 @router.post("/taxis", response_model=TaxiSummary, status_code=201)
@@ -77,8 +90,8 @@ def list_rank_agents(store: Store = Depends(store_dependency)) -> List[RankAgent
 
 @router.post("/terminals", response_model=TerminalSummary, status_code=201)
 def add_terminal(payload: TerminalCreateRequest, store: Store = Depends(store_dependency)) -> TerminalSummary:
-    terminal = admin_service.add_terminal(store, payload.terminal_id, payload.name)
-    return TerminalSummary(terminal_id=terminal.terminal_id, name=terminal.name)
+    terminal = admin_service.add_terminal(store, payload.terminal_id, payload.name, payload.capacity)
+    return _terminal_summary(store, terminal)
 
 
 @router.delete("/terminals/{terminal_id}", status_code=204)
@@ -89,7 +102,7 @@ def remove_terminal(terminal_id: str, store: Store = Depends(store_dependency)) 
 
 @router.get("/terminals", response_model=List[TerminalSummary])
 def list_terminals(store: Store = Depends(store_dependency)) -> List[TerminalSummary]:
-    return [TerminalSummary(terminal_id=t.terminal_id, name=t.name) for t in admin_service.list_terminals(store)]
+    return [_terminal_summary(store, t) for t in admin_service.list_terminals(store)]
 
 
 @router.put("/traffic-conditions", status_code=204)

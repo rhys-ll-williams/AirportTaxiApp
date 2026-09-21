@@ -46,7 +46,9 @@ def return_to_terminal(
     payload: ReturnToTerminalRequest,
     store: Store = Depends(store_dependency),
 ) -> TaxiStatusResponse:
-    fare_service.return_to_terminal(store, badge_number, payload.terminal_id, payload.lat, payload.lon)
+    fare_service.return_to_terminal(
+        store, badge_number, payload.terminal_id, payload.eta_minutes, payload.lat, payload.lon
+    )
     return taxi_to_status_response(store, get_taxi_or_404(store, badge_number))
 
 

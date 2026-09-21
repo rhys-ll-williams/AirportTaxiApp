@@ -1,7 +1,7 @@
 """Shared entity lookup helpers that raise NotFoundError consistently."""
 from __future__ import annotations
 
-from app.models import NotFoundError, RankAgent, Taxi, Terminal
+from app.models import NotFoundError, RankAgent, Taxi, TaxiStatus, Terminal
 from app.store import Store
 
 
@@ -24,3 +24,16 @@ def get_rank_agent_or_404(store: Store, agent_id: str) -> RankAgent:
     if agent is None:
         raise NotFoundError(f"No rank agent with id '{agent_id}'")
     return agent
+
+
+def terminal_occupancy(store: Store, terminal_id: str) -> int:
+    """Taxis currently physically holding a spot at this terminal's rank."""
+    return sum(
+        1
+        for taxi in store.taxis.values()
+        if taxi.terminal_id == terminal_id and taxi.status == TaxiStatus.CALLED
+    )
+
+
+def terminal_has_capacity(store: Store, terminal: Terminal) -> bool:
+    return terminal_occupancy(store, terminal.terminal_id) < terminal.capacity

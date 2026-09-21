@@ -1,8 +1,9 @@
 """Administrator actions: managing taxis, rank agents, and terminals."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
+from app.config import DEFAULT_TERMINAL_CAPACITY
 from app.models import (
     Administrator,
     ConflictError,
@@ -68,11 +69,15 @@ def add_administrator(store: Store, admin_id: str, name: str) -> Administrator:
         return admin
 
 
-def add_terminal(store: Store, terminal_id: str, name: str) -> Terminal:
+def add_terminal(store: Store, terminal_id: str, name: str, capacity: Optional[int] = None) -> Terminal:
     with store.lock:
         if terminal_id in store.terminals:
             raise ConflictError(f"Terminal with id '{terminal_id}' already exists")
-        terminal = Terminal(terminal_id=terminal_id, name=name)
+        terminal = Terminal(
+            terminal_id=terminal_id,
+            name=name,
+            capacity=capacity if capacity is not None else DEFAULT_TERMINAL_CAPACITY,
+        )
         store.terminals[terminal_id] = terminal
         return terminal
 
