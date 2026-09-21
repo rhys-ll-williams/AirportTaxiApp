@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Heathrow Taxi Rank System{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Overview</h2>
+  <p>An MVP for managing Heathrow Airport's central "feeder park" taxi queue:
+     estimated wait times, terminal-call notifications, and the local / fares-fare
+     return exemptions.</p>
+  <div class="grid">
+    <div class="stat">
+      <div class="value">🚖</div>
+      <div class="label"><a href="/driver" style="color:inherit">Driver App</a></div>
+    </div>
+    <div class="stat">
+      <div class="value">🧑‍✈️</div>
+      <div class="label"><a href="/rank-agent" style="color:inherit">Rank Agent Console</a></div>
+    </div>
+    <div class="stat">
+      <div class="value">📺</div>
+      <div class="label"><a href="/screen" style="color:inherit">Feeder Park Screen</a></div>
+    </div>
+    <div class="stat">
+      <div class="value">🛠️</div>
+      <div class="label"><a href="/admin" style="color:inherit">Admin</a></div>
+    </div>
+  </div>
+</div>
+<div class="card">
+  <h2>How the flow works</h2>
+  <ol class="muted">
+    <li>Admin registers taxis and rank agents (Admin page).</li>
+    <li>Driver joins the feeder park queue from the Driver App and sees their position and estimated wait.</li>
+    <li>A rank agent calls the next taxi forward for their terminal; the driver gets a notification telling them which terminal to go to.</li>
+    <li>The passenger tells the rank agent their destination; the agent logs it, and the system classifies it as Standard, Local, or Fares Fare.</li>
+    <li>The driver marks the fare complete. Standard fares rejoin the back of the feeder park automatically. Local / Fares Fare exemptions instead get a return deadline and can check back in directly at a terminal of their choice.</li>
+    <li>The Feeder Park Screen shows badge numbers of drivers due to be called within the next few minutes.</li>
+  </ol>
+</div>
+{% endblock %}

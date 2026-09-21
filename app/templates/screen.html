@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Feeder Park Screen{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Called forward soon <span class="screen-clock" id="clock"></span></h2>
+  <p class="muted">Badge numbers due to be called to a terminal within the next <span id="lookahead">5</span> minutes. Get ready to move up.</p>
+  <div id="due-soon"></div>
+</div>
+
+<div class="card">
+  <h2>Full feeder park queue</h2>
+  <p class="muted">Current call rate: <span id="call-rate">-</span> &middot; Traffic conditions: <span id="traffic" class="pill"></span></p>
+  <table>
+    <thead><tr><th>#</th><th>Badge</th><th>Driver</th><th>Est. wait</th></tr></thead>
+    <tbody id="queue-table"></tbody>
+  </table>
+</div>
+
+<script>
+function tickClock() {
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+async function refreshScreen() {
+  try {
+    const data = await api.get("/api/screens/feeder-park");
+    document.getElementById("lookahead").textContent = data.lookahead_minutes;
+    document.getElementById("call-rate").textContent = `1 taxi every ${data.call_interval_minutes} min`;
+    document.getElementById("traffic").textContent = data.traffic_level;
+
+    const dueSoon = document.getElementById("due-soon");
+    dueSoon.innerHTML = data.due_soon_badge_numbers.length
+      ? data.due_soon_badge_numbers.map(b => `<span class="badge-tile">${b}</span>`).join("")
+      : '<p class="muted">No taxis due to be called in the next few minutes.</p>';
+
+    const tbody = document.getElementById("queue-table");
+    tbody.innerHTML = data.queue.length
+      ? data.queue.map(r => `
+        <tr>
+          <td>${r.position}</td>
+          <td>${r.badge_number}</td>
+          <td>${r.driver_name}</td>
+          <td>${fmtMinutes(r.estimated_wait_minutes)}</td>
+        </tr>`).join("")
+      : '<tr><td colspan="4" class="muted">Feeder park is empty.</td></tr>';
+  } catch (e) { /* screen keeps showing last-known data on transient errors */ }
+}
+
+refreshScreen();
+setInterval(refreshScreen, 4000);
+</script>
+{% endblock %}

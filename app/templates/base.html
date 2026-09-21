@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Heathrow Taxi Rank System{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/api.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>🚕 Heathrow Feeder Park</h1>
+    <nav>
+      <a href="/" class="{{ 'active' if active == 'home' else '' }}">Home</a>
+      <a href="/driver" class="{{ 'active' if active == 'driver' else '' }}">Driver App</a>
+      <a href="/rank-agent" class="{{ 'active' if active == 'rank-agent' else '' }}">Rank Agent</a>
+      <a href="/screen" class="{{ 'active' if active == 'screen' else '' }}">Feeder Park Screen</a>
+      <a href="/admin" class="{{ 'active' if active == 'admin' else '' }}">Admin</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Rank Agent Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Rank Agent Login</h2>
+  <div id="error" class="error-banner"></div>
+  <div class="row">
+    <div>
+      <label for="agent-id">Rank agent ID</label>
+      <input id="agent-id" placeholder="e.g. RA-1">
+    </div>
+    <div>
+      <label for="terminal-select">Terminal</label>
+      <select id="terminal-select"></select>
+    </div>
+  </div>
+  <button onclick="startConsole()">Start</button>
+</div>
+
+<div id="panel" style="display:none">
+  <div class="card">
+    <h2>Call next taxi</h2>
+    <p class="muted">Pulls the next taxi forward from the central feeder park queue and notifies the driver.</p>
+    <button onclick="callNext()">Call next taxi to this terminal</button>
+    <div id="call-result"></div>
+  </div>
+
+  <div class="card">
+    <h2>Taxis waiting at this rank</h2>
+    <table>
+      <thead><tr><th>Badge</th><th>Driver</th><th>Arrived</th><th>Via</th><th></th></tr></thead>
+      <tbody id="rank-table"></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="fare-form-card" style="display:none">
+    <h2>Record passenger destination — <span id="fare-badge"></span></h2>
+    <label for="destination">Destination (as told by the passenger)</label>
+    <input id="destination" placeholder="e.g. Windsor, Central London, Manchester...">
+    <label for="classification-override">Classification override (optional)</label>
+    <select id="classification-override">
+      <option value="">Auto-detect from destination</option>
+      <option value="standard">Standard (must rejoin feeder park)</option>
+      <option value="local">Local (within London, ~1h return)</option>
+      <option value="fares_fare">Fares Fare (outside London, ~1h15 return)</option>
+    </select>
+    <label for="round-trip-override">Round trip estimate override, minutes (optional)</label>
+    <input id="round-trip-override" type="number" min="1" placeholder="leave blank to use known/auto estimate">
+    <button onclick="submitFare()">Record fare</button>
+    <button class="secondary" onclick="cancelFare()">Cancel</button>
+    <div id="fare-result"></div>
+  </div>
+</div>
+
+<script>
+let agentId = null, terminalId = null, selectedBadge = null;
+let poller = null;
+
+async function startConsole() {
+  agentId = document.getElementById("agent-id").value.trim();
+  terminalId = document.getElementById("terminal-select").value;
+  if (!agentId || !terminalId) return;
+  document.getElementById("panel").style.display = "block";
+  if (poller) clearInterval(poller);
+  await refreshRank();
+  poller = setInterval(refreshRank, 3000);
+}
+
+async function loadTerminals() {
+  const select = document.getElementById("terminal-select");
+  try {
+    const terminals = await api.get("/api/admin/terminals");
+    select.innerHTML = terminals.map(t => `<option value="${t.terminal_id}">${t.name} (${t.terminal_id})</option>`).join("");
+  } catch (e) { showError("error", e); }
+}
+loadTerminals();
+
+async function callNext() {
+  clearError("error");
+  try {
+    const taxi = await api.post(`/api/rank-agent/terminals/${terminalId}/call-next`);
+    document.getElementById("call-result").innerHTML =
+      `<p class="muted">Called badge <strong>${taxi.badge_number}</strong> (${taxi.driver_name}) to this terminal.</p>`;
+    await refreshRank();
+  } catch (e) { showError("error", e); }
+}
+
+async function refreshRank() {
+  try {
+    const taxis = await api.get(`/api/rank-agent/terminals/${terminalId}/rank`);
+    clearError("error");
+    const tbody = document.getElementById("rank-table");
+    if (taxis.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">No taxis waiting at this rank yet.</td></tr>';
+    } else {
+      tbody.innerHTML = taxis.map(t => `
+        <tr>
+          <td>${t.badge_number}</td>
+          <td>${t.driver_name}</td>
+          <td>${fmtTime(t.called_at)}</td>
+          <td><span class="pill">${t.self_checked_in ? "exemption return" : "feeder park"}</span></td>
+          <td><button onclick="openFareForm('${t.badge_number}')">Take fare</button></td>
+        </tr>
+      `).join("");
+    }
+  } catch (e) { showError("error", e); }
+}
+
+function openFareForm(badge) {
+  selectedBadge = badge;
+  document.getElementById("fare-badge").textContent = badge;
+  document.getElementById("fare-form-card").style.display = "block";
+  document.getElementById("fare-result").innerHTML = "";
+}
+
+function cancelFare() {
+  selectedBadge = null;
+  document.getElementById("fare-form-card").style.display = "none";
+}
+
+async function submitFare() {
+  clearError("error");
+  const destination = document.getElementById("destination").value.trim();
+  if (!destination || !selectedBadge) return;
+  const body = { destination, rank_agent_id: agentId };
+  const override = document.getElementById("classification-override").value;
+  if (override) body.classification_override = override;
+  const roundTrip = document.getElementById("round-trip-override").value;
+  if (roundTrip) body.round_trip_override_minutes = parseFloat(roundTrip);
+
+  try {
+    const fare = await api.post(`/api/rank-agent/taxis/${selectedBadge}/fare`, body);
+    document.getElementById("fare-result").innerHTML = `
+      <div class="notification">
+        Classified as <strong>${statusLabel(fare.classification)}</strong>
+        ${fare.round_trip_minutes ? `&middot; est. round trip ${fare.round_trip_minutes} min` : ""}.
+        The driver will confirm on their app when the fare is complete.
+      </div>`;
+    document.getElementById("destination").value = "";
+    await refreshRank();
+  } catch (e) { showError("error", e); }
+}
+</script>
+{% endblock %}

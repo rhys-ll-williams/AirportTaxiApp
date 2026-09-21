@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Driver App{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Driver Login</h2>
+  <div id="error" class="error-banner"></div>
+  <label for="badge">Badge number</label>
+  <input id="badge" placeholder="e.g. T-001">
+  <button onclick="loadDriver()">Load</button>
+  <span class="muted" id="hint">Enter the badge number an administrator registered for you.</span>
+</div>
+
+<div id="panel" style="display:none">
+  <div class="card">
+    <h2>Status</h2>
+    <p><span id="status-badge" class="status-badge"></span> &nbsp; <strong id="driver-name"></strong></p>
+
+    <div class="grid" id="feeder-stats" style="display:none">
+      <div class="stat"><div class="value" id="queue-pos">-</div><div class="label">Queue position</div></div>
+      <div class="stat"><div class="value" id="queue-eta">-</div><div class="label">Estimated wait</div></div>
+    </div>
+
+    <div class="grid" id="called-stats" style="display:none">
+      <div class="stat"><div class="value" id="called-terminal">-</div><div class="label">Go to terminal</div></div>
+      <div class="stat"><div class="value" id="called-checkin">-</div><div class="label">How you got here</div></div>
+    </div>
+
+    <div class="grid" id="exempt-stats" style="display:none">
+      <div class="stat"><div class="value" id="exempt-type">-</div><div class="label">Exemption</div></div>
+      <div class="stat"><div class="value" id="exempt-destination">-</div><div class="label">Destination</div></div>
+      <div class="stat"><div class="value" id="exempt-remaining">-</div><div class="label">Time left to return</div></div>
+      <div class="stat"><div class="value" id="exempt-deadline">-</div><div class="label">Deadline</div></div>
+    </div>
+
+    <div style="margin-top:16px">
+      <button id="btn-join" onclick="doAction('join-feeder-park')">Join feeder park</button>
+      <button id="btn-leave" class="secondary" onclick="doAction('leave-feeder-park')">Leave feeder park</button>
+      <button id="btn-complete" onclick="doAction('complete-fare')">Fare complete</button>
+    </div>
+
+    <div id="return-form" style="display:none; margin-top:10px">
+      <label for="return-terminal">Choose terminal to return to</label>
+      <select id="return-terminal"></select>
+      <label class="muted">Optional: simulate check-in GPS location (used only to confirm you're back at the airport, never to judge your route)</label>
+      <div class="row">
+        <input id="return-lat" placeholder="lat (e.g. 51.47)">
+        <input id="return-lon" placeholder="lon (e.g. -0.4543)">
+      </div>
+      <button onclick="returnToTerminal()">Check in at terminal</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Notifications</h2>
+    <div id="notifications"></div>
+  </div>
+</div>
+
+<script>
+let currentBadge = null;
+let poller = null;
+
+async function loadDriver() {
+  const badge = document.getElementById("badge").value.trim();
+  if (!badge) return;
+  currentBadge = badge;
+  clearError("error");
+  if (poller) clearInterval(poller);
+  await refresh();
+  poller = setInterval(refresh, 3000);
+  document.getElementById("panel").style.display = "block";
+}
+
+async function loadTerminalOptions() {
+  const select = document.getElementById("return-terminal");
+  if (select.dataset.loaded) return;
+  try {
+    const terminals = await api.get("/api/admin/terminals");
+    select.innerHTML = terminals.map(t => `<option value="${t.terminal_id}">${t.name}</option>`).join("");
+    select.dataset.loaded = "1";
+  } catch (e) { /* ignore */ }
+}
+
+async function refresh() {
+  if (!currentBadge) return;
+  try {
+    const data = await api.get(`/api/driver/taxis/${encodeURIComponent(currentBadge)}`);
+    clearError("error");
+    render(data);
+  } catch (e) {
+    showError("error", e);
+  }
+}
+
+function render(data) {
+  document.getElementById("driver-name").textContent = data.driver_name;
+  const badgeEl = document.getElementById("status-badge");
+  badgeEl.textContent = statusLabel(data.status);
+  badgeEl.className = "status-badge status-" + data.status;
+
+  document.getElementById("feeder-stats").style.display = data.status === "in_feeder_park" ? "grid" : "none";
+  document.getElementById("queue-pos").textContent = data.queue_position ?? "-";
+  document.getElementById("queue-eta").textContent = fmtMinutes(data.estimated_wait_minutes);
+
+  const called = data.status === "called";
+  document.getElementById("called-stats").style.display = called ? "grid" : "none";
+  document.getElementById("called-terminal").textContent = data.terminal_name || "-";
+  document.getElementById("called-checkin").textContent = data.self_checked_in ? "Self check-in (exemption return)" : "Called by feeder park";
+
+  const exempt = data.status === "return_exempt";
+  document.getElementById("exempt-stats").style.display = exempt ? "grid" : "none";
+  if (exempt) {
+    document.getElementById("exempt-type").textContent = data.exemption_type;
+    document.getElementById("exempt-destination").textContent = data.exemption_destination || "-";
+    const remaining = data.minutes_remaining_to_return;
+    const remEl = document.getElementById("exempt-remaining");
+    remEl.textContent = fmtMinutes(remaining);
+    remEl.style.color = (remaining !== null && remaining < 0) ? "var(--bad)" : (remaining !== null && remaining < 15 ? "var(--warn)" : "var(--good)");
+    document.getElementById("exempt-deadline").textContent = fmtTime(data.return_deadline);
+  }
+
+  document.getElementById("btn-join").disabled = data.status !== "offline";
+  document.getElementById("btn-leave").disabled = data.status !== "in_feeder_park";
+  document.getElementById("btn-complete").disabled = data.status !== "on_fare";
+
+  const returnForm = document.getElementById("return-form");
+  if (exempt) {
+    returnForm.style.display = "block";
+    loadTerminalOptions();
+  } else {
+    returnForm.style.display = "none";
+  }
+
+  const notifWrap = document.getElementById("notifications");
+  if (data.notifications.length === 0) {
+    notifWrap.innerHTML = '<p class="muted">No notifications yet.</p>';
+  } else {
+    notifWrap.innerHTML = data.notifications.map(n => `
+      <div class="notification ${n.read ? '' : 'unread'}">
+        <div>${n.message}</div>
+        <div class="muted">${fmtTime(n.created_at)}${n.read ? '' : ' &middot; new'}</div>
+      </div>
+    `).join("");
+  }
+}
+
+async function doAction(action) {
+  if (!currentBadge) return;
+  clearError("error");
+  try {
+    await api.post(`/api/driver/taxis/${encodeURIComponent(currentBadge)}/${action}`);
+    await api.post(`/api/driver/taxis/${encodeURIComponent(currentBadge)}/notifications/mark-read`);
+    await refresh();
+  } catch (e) {
+    showError("error", e);
+  }
+}
+
+async function returnToTerminal() {
+  if (!currentBadge) return;
+  clearError("error");
+  const terminal_id = document.getElementById("return-terminal").value;
+  const latStr = document.getElementById("return-lat").value.trim();
+  const lonStr = document.getElementById("return-lon").value.trim();
+  const body = { terminal_id };
+  if (latStr) body.lat = parseFloat(latStr);
+  if (lonStr) body.lon = parseFloat(lonStr);
+  try {
+    await api.post(`/api/driver/taxis/${encodeURIComponent(currentBadge)}/return-to-terminal`, body);
+    await refresh();
+  } catch (e) {
+    showError("error", e);
+  }
+}
+</script>
+{% endblock %}

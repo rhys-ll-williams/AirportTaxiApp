@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Admin Console{% endblock %}
+{% block content %}
+<div id="error" class="error-banner"></div>
+
+<div class="card">
+  <h2>Live traffic conditions</h2>
+  <p class="muted">Simulates a live traffic feed. Affects the minimum return-time limit for local / fares-fare exemptions (never lowers it below the floor, only extends it).</p>
+  <select id="traffic-level">
+    <option value="normal">Normal</option>
+    <option value="moderate">Moderate</option>
+    <option value="heavy">Heavy</option>
+  </select>
+  <button onclick="setTraffic()">Update</button>
+</div>
+
+<div class="card">
+  <h2>Taxis</h2>
+  <div class="row">
+    <input id="taxi-badge" placeholder="Badge number (e.g. T-002)">
+    <input id="taxi-name" placeholder="Driver name">
+  </div>
+  <button onclick="addTaxi()">Add taxi</button>
+  <table>
+    <thead><tr><th>Badge</th><th>Driver</th><th>Status</th><th>Terminal</th><th></th></tr></thead>
+    <tbody id="taxi-table"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Rank agents</h2>
+  <div class="row">
+    <input id="agent-id" placeholder="Agent ID (e.g. RA-2)">
+    <input id="agent-name" placeholder="Name">
+    <select id="agent-terminal"></select>
+  </div>
+  <button onclick="addAgent()">Add rank agent</button>
+  <table>
+    <thead><tr><th>Agent ID</th><th>Name</th><th>Terminal</th><th></th></tr></thead>
+    <tbody id="agent-table"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Terminals</h2>
+  <div class="row">
+    <input id="terminal-id" placeholder="Terminal ID (e.g. T1)">
+    <input id="terminal-name" placeholder="Name (e.g. Terminal 1)">
+  </div>
+  <button onclick="addTerminal()">Add terminal</button>
+  <table>
+    <thead><tr><th>ID</th><th>Name</th><th></th></tr></thead>
+    <tbody id="terminal-table"></tbody>
+  </table>
+</div>
+
+<script>
+async function refreshAll() {
+  clearError("error");
+  try {
+    const [taxis, agents, terminals, traffic] = await Promise.all([
+      api.get("/api/admin/taxis"),
+      api.get("/api/admin/rank-agents"),
+      api.get("/api/admin/terminals"),
+      api.get("/api/admin/traffic-conditions"),
+    ]);
+    renderTaxis(taxis);
+    renderAgents(agents, terminals);
+    renderTerminals(terminals);
+    document.getElementById("traffic-level").value = traffic.level;
+  } catch (e) { showError("error", e); }
+}
+
+function renderTaxis(taxis) {
+  const tbody = document.getElementById("taxi-table");
+  tbody.innerHTML = taxis.length ? taxis.map(t => `
+    <tr>
+      <td>${t.badge_number}</td>
+      <td>${t.driver_name}</td>
+      <td><span class="status-badge status-${t.status}">${statusLabel(t.status)}</span></td>
+      <td>${t.terminal_id || "-"}</td>
+      <td><button class="danger" onclick="removeTaxi('${t.badge_number}')">Remove</button></td>
+    </tr>`).join("") : '<tr><td colspan="5" class="muted">No taxis registered yet.</td></tr>';
+}
+
+function renderAgents(agents, terminals) {
+  const select = document.getElementById("agent-terminal");
+  select.innerHTML = '<option value="">(unassigned)</option>' + terminals.map(t => `<option value="${t.terminal_id}">${t.name}</option>`).join("");
+  const tbody = document.getElementById("agent-table");
+  tbody.innerHTML = agents.length ? agents.map(a => `
+    <tr>
+      <td>${a.agent_id}</td>
+      <td>${a.name}</td>
+      <td>${a.terminal_id || "-"}</td>
+      <td><button class="danger" onclick="removeAgent('${a.agent_id}')">Remove</button></td>
+    </tr>`).join("") : '<tr><td colspan="4" class="muted">No rank agents registered yet.</td></tr>';
+}
+
+function renderTerminals(terminals) {
+  const tbody = document.getElementById("terminal-table");
+  tbody.innerHTML = terminals.map(t => `
+    <tr>
+      <td>${t.terminal_id}</td>
+      <td>${t.name}</td>
+      <td><button class="danger" onclick="removeTerminal('${t.terminal_id}')">Remove</button></td>
+    </tr>`).join("");
+}
+
+async function addTaxi() {
+  clearError("error");
+  const badge_number = document.getElementById("taxi-badge").value.trim();
+  const driver_name = document.getElementById("taxi-name").value.trim();
+  if (!badge_number || !driver_name) return;
+  try {
+    await api.post("/api/admin/taxis", { badge_number, driver_name });
+    document.getElementById("taxi-badge").value = "";
+    document.getElementById("taxi-name").value = "";
+    await refreshAll();
+  } catch (e) { showError("error", e); }
+}
+
+async function removeTaxi(badge) {
+  clearError("error");
+  try { await api.del(`/api/admin/taxis/${encodeURIComponent(badge)}`); await refreshAll(); }
+  catch (e) { showError("error", e); }
+}
+
+async function addAgent() {
+  clearError("error");
+  const agent_id = document.getElementById("agent-id").value.trim();
+  const name = document.getElementById("agent-name").value.trim();
+  const terminal_id = document.getElementById("agent-terminal").value || null;
+  if (!agent_id || !name) return;
+  try {
+    await api.post("/api/admin/rank-agents", { agent_id, name, terminal_id });
+    document.getElementById("agent-id").value = "";
+    document.getElementById("agent-name").value = "";
+    await refreshAll();
+  } catch (e) { showError("error", e); }
+}
+
+async function removeAgent(agentId) {
+  clearError("error");
+  try { await api.del(`/api/admin/rank-agents/${encodeURIComponent(agentId)}`); await refreshAll(); }
+  catch (e) { showError("error", e); }
+}
+
+async function addTerminal() {
+  clearError("error");
+  const terminal_id = document.getElementById("terminal-id").value.trim();
+  const name = document.getElementById("terminal-name").value.trim();
+  if (!terminal_id || !name) return;
+  try {
+    await api.post("/api/admin/terminals", { terminal_id, name });
+    document.getElementById("terminal-id").value = "";
+    document.getElementById("terminal-name").value = "";
+    await refreshAll();
+  } catch (e) { showError("error", e); }
+}
+
+async function removeTerminal(terminalId) {
+  clearError("error");
+  try { await api.del(`/api/admin/terminals/${encodeURIComponent(terminalId)}`); await refreshAll(); }
+  catch (e) { showError("error", e); }
+}
+
+async function setTraffic() {
+  clearError("error");
+  const level = document.getElementById("traffic-level").value;
+  try { await api.put("/api/admin/traffic-conditions", { level }); }
+  catch (e) { showError("error", e); }
+}
+
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+{% endblock %}
