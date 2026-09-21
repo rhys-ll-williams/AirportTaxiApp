@@ -60,6 +60,7 @@ the whole flow can be driven from a browser without any extra tooling.
 app/
   models.py            domain entities & enums (dataclasses)
   store.py              single in-memory Store (thread-safe) - see note below
+  clock.py               controllable clock (real time in prod, simulated in load tests)
   config.py              tunable constants (floors, multipliers, geofence, etc.)
   data/destinations.py    static destination -> classification/round-trip lookup
   services/                business logic, framework-free
@@ -74,8 +75,11 @@ app/
   serializers.py           dataclass -> response schema conversion
   routers/                 FastAPI routers (driver / rank-agent / admin / screens / pages)
   templates/, static/       server-rendered UI (Jinja2 + vanilla JS polling)
-tests/                    pytest unit + API integration tests
-scripts/seed_demo_data.py  populates a running server with sample data
+  simulation/               24h/10,000-driver load simulation (see below)
+tests/                    pytest unit + API integration tests + simulation smoke tests
+scripts/
+  seed_demo_data.py         populates a running server with sample data
+  simulate.py                 CLI for the load simulation
 ```
 
 **Storage**: state lives in an in-memory `Store` (guarded by a lock) rather
@@ -145,10 +149,58 @@ python scripts/seed_demo_data.py   # requires the server to already be running
 pytest
 ```
 
-38 tests cover queue position/ETA estimation, destination classification,
+60 tests cover queue position/ETA estimation, destination classification,
 the exemption return-deadline math (floors + traffic multiplier), the
-geofence distance check, admin CRUD, and full API-level flows for standard,
-local, and fares-fare fares.
+geofence distance check, terminal capacity, admin CRUD, full API-level
+flows for standard, local, and fares-fare fares, and fast smoke tests for
+the load simulation below.
+
+## Load simulation: a full day, up to 10,000 drivers
+
+`scripts/simulate.py` runs a 24-hour (midnight-to-midnight), up-to-10,000
+driver simulation straight through the app's real service layer - the same
+`admin_service` / `queue_service` / `dispatch_service` / `fare_service`
+functions the HTTP API calls - so it's a genuine load test of the actual
+queueing, dispatch, classification, terminal-capacity and exemption-return
+logic, not a separate model of it. `app/clock.py` lets it drive that logic
+against a simulated clock instead of real time, so a full day runs in a few
+seconds.
+
+It models:
+- **Flight-driven demand**: ~55 flights/hour between 05:00-23:00 (with a
+  realistic morning/evening bank layered on top, averaging to that rate)
+  and a low overnight baseline, each sending a handful of taxi-seeking
+  passengers to a terminal a little after landing.
+- **Driver shift patterns**: a 3-mode mixture of shift start times (dawn /
+  day / evening) roughly tracking the demand peaks, with randomised shift
+  lengths - not all 10,000 drivers are working at once.
+- **Return-trip timing**: drawn from the same destination table
+  (`app/data/destinations.py`) the app itself classifies fares against.
+- **The "does the driver return?" decision**: after a Local/Fares Fare
+  exemption, drivers have a baseline chance of just not coming back, which
+  is biased significantly higher for central-London destinations (more
+  competing street hails there) and higher still near the end of a shift.
+
+```bash
+python scripts/simulate.py                                  # 10,000 drivers, default seed
+python scripts/simulate.py --drivers 2000 --seed 7           # smaller/faster run
+python scripts/simulate.py --csv out/timeseries.csv          # also write a 15-min snapshot CSV
+python scripts/simulate.py --progress 60                     # print progress hourly
+```
+
+It prints a summary (fares by classification, exemption return/no-return
+breakdown and reasons, terminal-full rejections, final taxi states) and,
+with `--csv`, a time series of feeder-park length, active drivers, and
+per-terminal occupancy you can chart. Every parameter (flight rate, fare
+mix, shift patterns, the not-return bias) is a documented, overridable
+assumption in `app/simulation/config.py` - the point is exercising the
+app's real logic under realistic-shaped load, not a precise digital twin
+of Heathrow.
+
+A small/fast version of this (a few hundred simulated drivers) runs as
+part of `pytest` (`tests/test_simulation.py`) checking invariants like
+"every driver is accounted for", "terminal occupancy never exceeds
+capacity", and "central-London destinations decline to return more often".
 
 ## Known MVP limitations / next steps
 
